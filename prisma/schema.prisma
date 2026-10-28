@@ -1,0 +1,146 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+model Account {
+  id                String  @id @default(auto()) @map("_id") @db.ObjectId
+  userId            String  @db.ObjectId
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.String
+  access_token      String? @db.String
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.String
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  sessionToken String   @unique
+  userId       String   @db.ObjectId
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model User {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  name          String
+  email         String    @unique
+  emailVerified DateTime?
+  password      String?
+  image         String?
+  role          String    @default("CANDIDATE") // ADMIN, CANDIDATE
+  phone         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts    Account[]
+  sessions    Session[]
+  candidacies Candidate[]
+  jobs        Job[]       @relation("AdminJobs")
+}
+
+model VerificationToken {
+  id         String   @id @default(auto()) @map("_id") @db.ObjectId
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Job {
+  id               String      @id @default(auto()) @map("_id") @db.ObjectId
+  title            String
+  description      String
+  requirements     String? // bullet points / plain text of requirements
+  skills           String? // comma separated skills, used by AI matching
+  responsibilities String?
+  employmentType   String? // FULL_TIME, PART_TIME, CONTRACT, INTERNSHIP
+  experienceLevel  String? // ENTRY, MID, SENIOR, LEAD
+  salaryRange      String?
+  department       String?
+  location         String?
+  status           String      @default("ACTIVE") // ACTIVE, CLOSED, DRAFT
+  aiGenerated      Boolean     @default(false)
+  interviewQuestions String? // JSON stringified array of question strings, asked by the AI voice interviewer
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  candidates       Candidate[]
+
+  // The admin (recruiter) who owns this job. Admins only see their own jobs.
+  adminId          String?     @db.ObjectId
+  admin            User?       @relation("AdminJobs", fields: [adminId], references: [id], onDelete: SetNull)
+}
+
+model Candidate {
+  id        String  @id @default(auto()) @map("_id") @db.ObjectId
+  name      String
+  email     String
+  phone     String?
+  resumeUrl String?
+  resumeText String? // raw/extracted resume text used for AI analysis
+
+  // status flow:
+  // APPLIED -> AI_REVIEWED -> INTERVIEW_APPROVED -> INTERVIEW_INVITED
+  // -> INTERVIEW_COMPLETED -> HIRED / REJECTED
+  status String @default("APPLIED")
+
+  // AI resume-matching results
+  matchScore       Int? // 0-100 %, set by Gemini after applying
+  aiAnalysis       String? // JSON string: { summary, strengths[], gaps[], recommendation }
+  interviewApproved Boolean @default(false) // admin permission to invite for AI interview
+  invitedAt         DateTime?
+
+  jobId String @db.ObjectId
+  job   Job    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  userId String?  @db.ObjectId
+  user   User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  notes     String?
+  calls     Call[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([jobId, userId])
+}
+
+model Call {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  candidateId String    @db.ObjectId
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  status      String    @default("SCHEDULED")
+  type        String    @default("SCREENING")
+
+  transcript  String?
+  summary     String?
+  duration    Int?
+  vapiCallId  String?
+  rating      Int?
+  notes       String?
+
+  videoUrl    String?
+
+  aiReport       String?
+  recommendation String?
+
+  scheduledAt DateTime?
+  startedAt   DateTime?
+  endedAt     DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
