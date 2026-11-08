@@ -36,6 +36,20 @@ A full recruitment platform with two portals:
 7. **Admin makes the final call** — Move to Office Interview (hired) or Reject — and
    the candidate is emailed automatically either way.
 
+## Job image & interview date (new)
+
+- When an admin posts (or edits) a job they can **upload an image** (JPG/PNG/WEBP, max 5MB) and must set the
+  **Interview Date & Time**. Images go to a private Supabase bucket `job-images` (created automatically on the
+  first upload) and are served through `/api/job-images/<file>`.
+- Candidates see **everything** from the post on `/portal/jobs` (image, description, requirements,
+  responsibilities, skills, salary, interview date) via **View Details**. Secret interview questions are not exposed.
+- Resume match **>= 50%** -> accepted: the email contains the interview date and link, and the same interview
+  appears in **My Applications**. **< 50%** -> rejected by email.
+- The interview room (and the `calls.start` API) stays locked until the interview date/time, with a live countdown;
+  **Start Interview** works automatically when the time arrives.
+- Optional `.env`: `APP_TIMEZONE` (default `Asia/Dhaka`) controls how the date is written inside emails.
+- After pulling these changes run: `npx prisma generate` (MongoDB needs no migration).
+
 ## Setup
 
 ```bash

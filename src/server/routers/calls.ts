@@ -139,6 +139,15 @@ export const callsRouter = createTRPCRouter({
         });
       }
 
+      // The interview can only start once the company's interview date/time has arrived.
+      const scheduledFor = candidate.job.interviewDate;
+      if (scheduledFor && scheduledFor.getTime() > Date.now()) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Your interview has not opened yet. Please come back at the scheduled date and time.",
+        });
+      }
+
       const failedCall = candidate.calls.find((c: { status: string }) => c.status === "FAILED");
       if (failedCall) {
         throw new TRPCError({

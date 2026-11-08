@@ -6,7 +6,37 @@ import { useTRPC } from "@/src/trpc/client";
 import { Button } from "@/src/components/ui/button";
 import { Card, CardContent, CardFooter } from "@/src/components/ui/card";
 import { Modal } from "@/src/components/ui/modal";
-import { timeAgo } from "@/src/lib/utils";
+import { timeAgo, formatDateTime } from "@/src/lib/utils";
+
+// "- item" / "• item" multi-line text -> clean list items
+function toLines(text: string | null | undefined): string[] {
+  if (!text) return [];
+  return text
+    .split("\n")
+    .map((line) => line.replace(/^\s*[-•*]\s*/, "").trim())
+    .filter(Boolean);
+}
+
+const EXPERIENCE_LABELS: Record<string, string> = {
+  ENTRY: "Entry level",
+  MID: "Mid level",
+  SENIOR: "Senior",
+  LEAD: "Lead",
+};
+
+function DetailSection({ title, items }: { title: string; items: string[] }) {
+  if (items.length === 0) return null;
+  return (
+    <div>
+      <h4 className="text-sm font-semibold text-gray-900 mb-1.5">{title}</h4>
+      <ul className="list-disc pl-5 space-y-1 text-sm text-gray-600">
+        {items.map((item, i) => (
+          <li key={i}>{item}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 export function PortalJobsClient() {
   const trpc = useTRPC();
@@ -15,10 +45,15 @@ export function PortalJobsClient() {
   const { data: myApplications } = useQuery(trpc.candidates.getMyApplications.queryOptions());
 
   const [applyJob, setApplyJob] = useState<{ id: string; title: string } | null>(null);
+  const [detailJob, setDetailJob] = useState<NonNullable<typeof jobs>[number] | null>(null);
   const [resumeText, setResumeText] = useState("");
   const [phone, setPhone] = useState("");
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState<{ matchScore?: number | null; decision?: "INVITED" | "REJECTED" | null } | null>(null);
+  const [success, setSuccess] = useState<{
+    matchScore?: number | null;
+    decision?: "INVITED" | "REJECTED" | null;
+    interviewDate?: Date | null;
+  } | null>(null);
   const [uploadedFileName, setUploadedFileName] = useState("");
   const [resumeUrl, setResumeUrl] = useState("");
   const [isParsingPdf, setIsParsingPdf] = useState(false);
@@ -30,7 +65,11 @@ export function PortalJobsClient() {
     trpc.candidates.submitApplication.mutationOptions({
       onSuccess: (data) => {
         queryClient.invalidateQueries({ queryKey: trpc.candidates.getMyApplications.queryKey() });
-        setSuccess({ matchScore: data.matchScore, decision: data.decision });
+        setSuccess({
+          matchScore: data.matchScore,
+          decision: data.decision,
+          interviewDate: data.interviewDate,
+        });
         setResumeText("");
         setPhone("");
         setUploadedFileName("");
@@ -164,7 +203,15 @@ export function PortalJobsClient() {
           {jobs.map((job) => {
             const applied = appliedJobIds.has(job.id);
             return (
-              <Card key={job.id} hover>
+              <Card key={job.id} hover className="overflow-hidden">
+                {job.imageUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={job.imageUrl}
+                    alt={job.title}
+                    className="h-40 w-full object-cover"
+                  />
+                )}
                 <CardContent className="space-y-2">
                   <h3 className="font-semibold text-gray-900">{job.title}</h3>
                   <p className="text-xs text-gray-500">
@@ -176,11 +223,19 @@ export function PortalJobsClient() {
                   {job.salaryRange && (
                     <p className="text-xs font-medium text-primary-700">{job.salaryRange}</p>
                   )}
+                  {job.interviewDate && (
+                    <p className="text-xs font-medium text-indigo-700 bg-indigo-50 rounded-md px-2 py-1 inline-block">
+                      AI interview: {formatDateTime(job.interviewDate)}
+                    </p>
+                  )}
                   <p className="text-xs text-gray-400">Posted {timeAgo(job.createdAt)}</p>
                 </CardContent>
                 <CardFooter>
+                  <Button variant="secondary" onClick={() => setDetailJob(job)}>
+                    View Details
+                  </Button>
                   <Button
-                    className="w-full"
+                    className="flex-1"
                     disabled={applied}
                     variant={applied ? "secondary" : "primary"}
                     onClick={() => setApplyJob({ id: job.id, title: job.title })}
@@ -198,6 +253,102 @@ export function PortalJobsClient() {
         </div>
       )}
 
+      <Modal
+        open={!!detailJob}
+        onClose={() => setDetailJob(null)}
+        title={detailJob?.title ?? ""}
+        size="lg"
+      >
+        {detailJob && (
+          <>
+            {detailJob.imageUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={detailJob.imageUrl}
+                alt={detailJob.title}
+                className="h-52 w-full object-cover"
+              />
+            )}
+            <div className="px-6 py-4 space-y-4">
+              <div className="flex flex-wrap gap-2 text-xs">
+                {detailJob.department && (
+                  <span className="rounded-full bg-gray-100 px-2.5 py-1 text-gray-700">{detailJob.department}</span>
+                )}
+                {detailJob.location && (
+                  <span className="rounded-full bg-gray-100 px-2.5 py-1 text-gray-700">{detailJob.location}</span>
+                )}
+                {detailJob.employmentType && (
+                  <span className="rounded-full bg-gray-100 px-2.5 py-1 text-gray-700">
+                    {detailJob.employmentType.replace("_", " ")}
+                  </span>
+                )}
+                {detailJob.experienceLevel && (
+                  <span className="rounded-full bg-gray-100 px-2.5 py-1 text-gray-700">
+                    {EXPERIENCE_LABELS[detailJob.experienceLevel] ?? detailJob.experienceLevel}
+                  </span>
+                )}
+                {detailJob.salaryRange && (
+                  <span className="rounded-full bg-primary-50 px-2.5 py-1 font-medium text-primary-700">
+                    {detailJob.salaryRange}
+                  </span>
+                )}
+              </div>
+
+              {detailJob.interviewDate && (
+                <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
+                  <strong>AI interview date:</strong> {formatDateTime(detailJob.interviewDate)}
+                  <p className="text-xs text-indigo-700 mt-0.5">
+                    If your resume matches 50% or more, you'll get the interview link by email and in your account.
+                  </p>
+                </div>
+              )}
+
+              <div>
+                <h4 className="text-sm font-semibold text-gray-900 mb-1.5">About the role</h4>
+                <p className="text-sm text-gray-600 whitespace-pre-line">{detailJob.description}</p>
+              </div>
+
+              <DetailSection title="Requirements" items={toLines(detailJob.requirements)} />
+              <DetailSection title="Responsibilities" items={toLines(detailJob.responsibilities)} />
+
+              {detailJob.skills && (
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-900 mb-1.5">Key skills</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {detailJob.skills
+                      .split(",")
+                      .map((skill) => skill.trim())
+                      .filter(Boolean)
+                      .map((skill) => (
+                        <span key={skill} className="rounded-full bg-accent-50 px-2.5 py-1 text-xs text-accent-700">
+                          {skill}
+                        </span>
+                      ))}
+                  </div>
+                </div>
+              )}
+
+              <p className="text-xs text-gray-400">Posted {timeAgo(detailJob.createdAt)}</p>
+            </div>
+            <CardFooter>
+              <Button variant="secondary" onClick={() => setDetailJob(null)}>
+                Close
+              </Button>
+              <Button
+                className="flex-1"
+                disabled={appliedJobIds.has(detailJob.id)}
+                onClick={() => {
+                  setApplyJob({ id: detailJob.id, title: detailJob.title });
+                  setDetailJob(null);
+                }}
+              >
+                {appliedJobIds.has(detailJob.id) ? "Already Applied" : "Apply Now"}
+              </Button>
+            </CardFooter>
+          </>
+        )}
+      </Modal>
+
       <Modal open={!!applyJob} onClose={closeModal} title={`Apply — ${applyJob?.title ?? ""}`} size="lg">
         <div className="px-6 py-4 space-y-4">
           {success ? (
@@ -214,7 +365,9 @@ export function PortalJobsClient() {
                   <> Your match score: <strong>{success.matchScore}%</strong>.</>
                 )}
                 {success.decision === "INVITED"
-                  ? " Great match! We've emailed you an interview invitation — you can also start it from My Applications."
+                  ? success.interviewDate
+                    ? ` Great match! You're accepted. We've emailed you the interview link — your interview is on ${formatDateTime(success.interviewDate)}. You can also start it from My Applications at that time.`
+                    : " Great match! You're accepted. We've emailed you the interview link — you can also start it from My Applications."
                   : success.decision === "REJECTED"
                   ? " Unfortunately your profile isn't a close enough match for this role. We've emailed you the update."
                   : " You'll receive an email once a recruiter reviews your application."}

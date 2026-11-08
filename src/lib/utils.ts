@@ -19,6 +19,30 @@ export function formatDate(date: Date | string | null | undefined): string {
 }
 
 /**
+ * Format a date + time (shown in the viewer's own timezone)
+ */
+export function formatDateTime(date: Date | string | null | undefined): string {
+  if (!date) return "—";
+  return new Date(date).toLocaleString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+/**
+ * True when the company's interview date/time has arrived.
+ * Jobs without an interview date are treated as open immediately.
+ */
+export function isInterviewOpen(date: Date | string | null | undefined): boolean {
+  if (!date) return true;
+  return new Date(date).getTime() <= Date.now();
+}
+
+/**
  * Format a date to a relative time string (e.g., "2 hours ago")
  */
 export function timeAgo(date: Date | string | null | undefined): string {

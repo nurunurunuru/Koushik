@@ -25,22 +25,58 @@ async function sendMail(to: string, subject: string, html: string) {
   await transporter.sendMail({ from: `AI Recruiter <${from}>`, to, subject, html });
 }
 
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// Interview date/time as shown in emails. Set APP_TIMEZONE in .env to change it (default: Asia/Dhaka).
+function formatInterviewDate(date: Date) {
+  const timeZone = process.env.APP_TIMEZONE || "Asia/Dhaka";
+  const text = new Intl.DateTimeFormat("en-US", {
+    dateStyle: "full",
+    timeStyle: "short",
+    timeZone,
+  }).format(date);
+  return `${text} (${timeZone})`;
+}
+
 export async function sendInterviewInvitationEmail(params: {
   to: string;
   candidateName: string;
   jobTitle: string;
   interviewUrl: string;
   matchScore: number;
+  interviewDate?: Date | null;
 }) {
+  const jobTitle = escapeHtml(params.jobTitle);
+  const candidateName = escapeHtml(params.candidateName);
+  const scheduled = params.interviewDate ? new Date(params.interviewDate) : null;
+  const isFuture = !!scheduled && scheduled.getTime() > Date.now();
+
+  const scheduleBlock = scheduled
+    ? `<div style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;padding:12px 16px;margin:16px 0;">
+         <strong>Interview date &amp; time:</strong><br/>${escapeHtml(formatInterviewDate(scheduled))}
+       </div>
+       <p>${
+         isFuture
+           ? "The interview room opens at the date and time above. You can use the button below (or the <strong>My Applications</strong> page in your account) once that time arrives."
+           : "The interview room is open now. Click the button below when you're ready."
+       }</p>`
+    : `<p>Click the button below whenever you're ready.</p>`;
+
   const html = `
   <div style="font-family: sans-serif; max-width: 560px; margin: 0 auto; line-height: 1.6;">
-    <h2 style="color:#4f46e5;">You're invited to interview for ${params.jobTitle}!</h2>
-    <p>Hi ${params.candidateName},</p>
+    <h2 style="color:#4f46e5;">You're invited to interview for ${jobTitle}!</h2>
+    <p>Hi ${candidateName},</p>
     <p>Great news! After reviewing your application, we'd like to invite you to the next step: a short
-    AI-powered voice screening interview for the <strong>${params.jobTitle}</strong> position.</p>
+    AI-powered voice interview for the <strong>${jobTitle}</strong> position.</p>
     <p>Your resume matched <strong>${params.matchScore}%</strong> of the role's requirements.</p>
-    <p>Click the button below whenever you're ready (find a quiet place with a working microphone,
-    it takes about 10-15 minutes):</p>
+    ${scheduleBlock}
+    <p>Please find a quiet place with a working microphone. It takes about 10-15 minutes.</p>
     <p style="text-align:center; margin: 28px 0;">
       <a href="${params.interviewUrl}" style="background:#4f46e5;color:#fff;padding:12px 24px;
       border-radius:8px;text-decoration:none;font-weight:600;">Start My Interview</a>

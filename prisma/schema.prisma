@@ -76,6 +76,8 @@ model Job {
   status           String      @default("ACTIVE") // ACTIVE, CLOSED, DRAFT
   aiGenerated      Boolean     @default(false)
   interviewQuestions String? // JSON stringified array of question strings, asked by the AI voice interviewer
+  imageUrl         String? // /api/job-images/<file> : banner/logo image uploaded by the company, shown to candidates
+  interviewDate    DateTime? // date+time set by the company: the AI interview room opens for candidates at this moment
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
   candidates       Candidate[]

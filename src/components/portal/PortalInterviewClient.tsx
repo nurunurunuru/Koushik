@@ -1,18 +1,62 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTRPC } from "@/src/trpc/client";
 import { RecruiterVoiceAgent } from "@/src/components/voice/RecruiterVoiceAgent";
 import { Card, CardContent } from "@/src/components/ui/card";
 import { Button } from "@/src/components/ui/button";
 import Link from "next/link";
+import { formatDateTime } from "@/src/lib/utils";
+
+// Live countdown to the company's interview date. Owns its own timer so the rest of the page
+// (and the voice agent) does not re-render every second.
+function InterviewCountdown({ targetMs, onReady }: { targetMs: number; onReady: () => void }) {
+  const [left, setLeft] = useState(() => targetMs - Date.now());
+
+  useEffect(() => {
+    const tick = () => {
+      const diff = targetMs - Date.now();
+      setLeft(diff);
+      if (diff <= 0) onReady();
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [targetMs, onReady]);
+
+  const total = Math.max(0, Math.floor(left / 1000));
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+
+  const parts: [number, string][] = [
+    [days, "days"],
+    [hours, "hours"],
+    [minutes, "min"],
+    [seconds, "sec"],
+  ];
+
+  return (
+    <div className="flex justify-center gap-3">
+      {parts.map(([value, label]) => (
+        <div key={label} className="w-16 rounded-lg bg-primary-50 py-2">
+          <div className="text-xl font-bold text-primary-700">{String(value).padStart(2, "0")}</div>
+          <div className="text-[11px] uppercase tracking-wide text-gray-500">{label}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export function PortalInterviewClient({ candidateId }: { candidateId: string }) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const [callId, setCallId] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
+  const [unlocked, setUnlocked] = useState(false);
+  const handleReady = useCallback(() => setUnlocked(true), []);
 
   const { data: application, isLoading } = useQuery(
     trpc.candidates.getMyApplicationById.queryOptions({ id: candidateId })
@@ -90,6 +134,11 @@ export function PortalInterviewClient({ candidateId }: { candidateId: string }) 
     jobQuestions = [];
   }
 
+  const interviewDate = application.job.interviewDate
+    ? new Date(application.job.interviewDate)
+    : null;
+  const locked = !!interviewDate && !unlocked && interviewDate.getTime() > Date.now();
+
   if (!application.interviewApproved) {
     return (
       <div className="max-w-lg mx-auto text-center py-16 space-y-3">
@@ -140,6 +189,30 @@ export function PortalInterviewClient({ candidateId }: { candidateId: string }) 
             <h3 className="font-semibold text-gray-900">Interview Completed</h3>
             <p className="text-sm text-gray-500">
               Thanks for completing your interview! The hiring team will review your results and follow up soon.
+            </p>
+            <Link href="/portal/applications">
+              <Button variant="secondary">Back to my applications</Button>
+            </Link>
+          </CardContent>
+        </Card>
+      ) : locked && interviewDate ? (
+        <Card>
+          <CardContent className="text-center py-10 space-y-4">
+            <div className="mx-auto w-12 h-12 rounded-full bg-primary-100 flex items-center justify-center">
+              <svg className="w-7 h-7 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+            </div>
+            <h3 className="font-semibold text-gray-900">Your interview is scheduled</h3>
+            <p className="text-sm text-gray-600">
+              The company has set your interview for
+              <br />
+              <strong className="text-gray-900">{formatDateTime(interviewDate)}</strong>
+            </p>
+            <InterviewCountdown targetMs={interviewDate.getTime()} onReady={handleReady} />
+            <p className="text-xs text-gray-400">
+              The Start Interview button appears here automatically when the time arrives.
+              You can also come back later from My Applications.
             </p>
             <Link href="/portal/applications">
               <Button variant="secondary">Back to my applications</Button>

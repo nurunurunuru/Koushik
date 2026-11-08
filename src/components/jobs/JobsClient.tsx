@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTRPC } from "@/src/trpc/client";
 import { Button } from "@/src/components/ui/button";
@@ -9,7 +9,7 @@ import { Badge } from "@/src/components/ui/badge";
 import { Input } from "@/src/components/ui/input";
 import { Select } from "@/src/components/ui/select";
 import { Modal } from "@/src/components/ui/modal";
-import { timeAgo } from "@/src/lib/utils";
+import { timeAgo, formatDateTime } from "@/src/lib/utils";
 import Link from "next/link";
 
 const EMPTY_JOB = {
@@ -25,7 +25,17 @@ const EMPTY_JOB = {
   location: "",
   status: "ACTIVE" as "ACTIVE" | "CLOSED" | "DRAFT",
   aiGenerated: false,
+  imageUrl: "",
+  interviewDate: "", // datetime-local value (admin's local time)
 };
+
+// Date -> value for <input type="datetime-local">
+function toLocalInput(d: Date | string | null | undefined): string {
+  if (!d) return "";
+  const x = new Date(d);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${x.getFullYear()}-${pad(x.getMonth() + 1)}-${pad(x.getDate())}T${pad(x.getHours())}:${pad(x.getMinutes())}`;
+}
 
 function parseQuestions(json: string | null | undefined): string[] {
   if (!json) return [];
@@ -46,17 +56,102 @@ export function JobsClient() {
   const [questionsError, setQuestionsError] = useState("");
   const [newJob, setNewJob] = useState(EMPTY_JOB);
   const [questions, setQuestions] = useState<string[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [imageError, setImageError] = useState("");
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+
+  const closeForm = () => {
+    setShowCreate(false);
+    setEditingId(null);
+    setNewJob(EMPTY_JOB);
+    setQuestions([]);
+    setAiError("");
+    setQuestionsError("");
+    setImageError("");
+  };
 
   const createJob = useMutation(
     trpc.jobs.create.mutationOptions({
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: trpc.jobs.getAll.queryKey() });
-        setShowCreate(false);
-        setNewJob(EMPTY_JOB);
-        setQuestions([]);
+        closeForm();
       },
     })
   );
+
+  const updateJob = useMutation(
+    trpc.jobs.update.mutationOptions({
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: trpc.jobs.getAll.queryKey() });
+        closeForm();
+      },
+    })
+  );
+
+  const openEdit = (job: NonNullable<typeof jobs>[number]) => {
+    setNewJob({
+      title: job.title,
+      description: job.description,
+      requirements: job.requirements ?? "",
+      responsibilities: job.responsibilities ?? "",
+      skills: job.skills ?? "",
+      employmentType: job.employmentType ?? "FULL_TIME",
+      experienceLevel: job.experienceLevel ?? "MID",
+      salaryRange: job.salaryRange ?? "",
+      department: job.department ?? "",
+      location: job.location ?? "",
+      status: job.status as "ACTIVE" | "CLOSED" | "DRAFT",
+      aiGenerated: job.aiGenerated,
+      imageUrl: job.imageUrl ?? "",
+      interviewDate: toLocalInput(job.interviewDate),
+    });
+    setQuestions(parseQuestions(job.interviewQuestions));
+    setEditingId(job.id);
+    setShowCreate(true);
+  };
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImageError("");
+    setUploadingImage(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/upload-job-image", { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Image upload failed.");
+      setNewJob((prev) => ({ ...prev, imageUrl: data.imageUrl }));
+    } catch (err) {
+      setImageError(err instanceof Error ? err.message : "Image upload failed.");
+    } finally {
+      setUploadingImage(false);
+      if (imageInputRef.current) imageInputRef.current.value = "";
+    }
+  };
+
+  const handleSubmit = () => {
+    const { imageUrl, interviewDate, ...rest } = newJob;
+    const cleanQuestions = questions.filter((q) => q.trim());
+    const date = interviewDate ? new Date(interviewDate) : undefined;
+    if (editingId) {
+      updateJob.mutate({
+        id: editingId,
+        ...rest,
+        imageUrl: imageUrl || null,
+        interviewDate: date ?? null,
+        interviewQuestions: cleanQuestions,
+      });
+    } else {
+      createJob.mutate({
+        ...rest,
+        imageUrl: imageUrl || undefined,
+        interviewDate: date,
+        interviewQuestions: cleanQuestions,
+      });
+    }
+  };
 
   const deleteJob = useMutation(
     trpc.jobs.delete.mutationOptions({
@@ -162,6 +257,14 @@ export function JobsClient() {
                 const qCount = parseQuestions(job.interviewQuestions).length;
                 return (
                   <div key={job.id} className="px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors">
+                    {job.imageUrl && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={job.imageUrl}
+                        alt=""
+                        className="h-12 w-12 rounded-lg object-cover mr-4 flex-shrink-0"
+                      />
+                    )}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <Link href={`/candidates?jobId=${job.id}`} className="text-sm font-medium text-gray-900 hover:text-primary-600 transition-colors">
@@ -184,6 +287,11 @@ export function JobsClient() {
                         <span className="mx-1">·</span>
                         Created {timeAgo(job.createdAt)}
                       </p>
+                      <p className="text-xs mt-1 text-indigo-700">
+                        {job.interviewDate
+                          ? `Interview date: ${formatDateTime(job.interviewDate)}`
+                          : "No interview date set"}
+                      </p>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0 ml-4">
                       <Button variant="secondary" size="sm" onClick={() => {
@@ -191,6 +299,9 @@ export function JobsClient() {
                         window.location.href = `/candidates?${params}`;
                       }}>
                         View Candidates
+                      </Button>
+                      <Button variant="secondary" size="sm" onClick={() => openEdit(job)}>
+                        Edit
                       </Button>
                       <Button variant="ghost" size="sm" onClick={() => {
                         if (window.confirm(`Delete "${job.title}"? This will also remove all associated candidates.`)) {
@@ -221,20 +332,14 @@ export function JobsClient() {
 
       <Modal
         open={showCreate}
-        onClose={() => {
-          setShowCreate(false);
-          setNewJob(EMPTY_JOB);
-          setQuestions([]);
-          setAiError("");
-          setQuestionsError("");
-        }}
-        title="Create New Job"
+        onClose={closeForm}
+        title={editingId ? "Edit Job" : "Create New Job"}
         size="lg"
       >
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            createJob.mutate({ ...newJob, interviewQuestions: questions.filter((q) => q.trim()) });
+            handleSubmit();
           }}
           className="p-6 space-y-4"
         >
@@ -296,6 +401,75 @@ export function JobsClient() {
             <Select label="Experience Level" id="experienceLevel" value={newJob.experienceLevel} onChange={(e) => setNewJob({ ...newJob, experienceLevel: e.target.value })}
               options={[{ value: "ENTRY", label: "Entry" }, { value: "MID", label: "Mid" }, { value: "SENIOR", label: "Senior" }, { value: "LEAD", label: "Lead" }]} />
             <Input label="Salary Range" id="salaryRange" placeholder="$70k - $95k" value={newJob.salaryRange} onChange={(e) => setNewJob({ ...newJob, salaryRange: e.target.value })} />
+          </div>
+
+          {/* Job image + interview date */}
+          <div className="border-t border-gray-100 pt-4 space-y-4">
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-gray-700">Job Image (optional)</label>
+              <p className="text-xs text-gray-400">
+                Company banner or logo shown to candidates on the job post. JPG, PNG or WEBP, max 5MB.
+              </p>
+              <input
+                ref={imageInputRef}
+                id="job-image-upload"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={handleImageUpload}
+                className="hidden"
+              />
+              {newJob.imageUrl ? (
+                <div className="relative">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={newJob.imageUrl}
+                    alt="Job"
+                    className="h-40 w-full rounded-lg object-cover border border-gray-200"
+                  />
+                  <div className="absolute top-2 right-2 flex gap-2">
+                    <label
+                      htmlFor="job-image-upload"
+                      className="cursor-pointer rounded-md bg-white/90 px-2.5 py-1 text-xs font-medium text-gray-700 shadow hover:bg-white"
+                    >
+                      Change
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setNewJob((prev) => ({ ...prev, imageUrl: "" }))}
+                      className="rounded-md bg-white/90 px-2.5 py-1 text-xs font-medium text-red-600 shadow hover:bg-white"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <label
+                  htmlFor="job-image-upload"
+                  className="flex items-center justify-center gap-2 w-full rounded-lg border-2 border-dashed border-gray-300 hover:border-primary-400 hover:bg-primary-50/30 transition-colors px-4 py-6 cursor-pointer text-sm text-gray-600"
+                >
+                  {uploadingImage ? "Uploading image..." : "Click to upload an image"}
+                </label>
+              )}
+              {uploadingImage && newJob.imageUrl && (
+                <p className="text-xs text-primary-600">Uploading image...</p>
+              )}
+              {imageError && <p className="text-xs text-red-600">{imageError}</p>}
+            </div>
+
+            <div className="space-y-1">
+              <Input
+                label="Interview Date & Time"
+                id="interviewDate"
+                type="datetime-local"
+                value={newJob.interviewDate}
+                onChange={(e) => setNewJob({ ...newJob, interviewDate: e.target.value })}
+                required
+              />
+              <p className="text-xs text-gray-400">
+                Accepted candidates (resume match 50% or more) get this date in their email and account.
+                Their AI interview unlocks at this date and time.
+              </p>
+            </div>
           </div>
 
           <Select label="Status" id="status" value={newJob.status} onChange={(e) => setNewJob({ ...newJob, status: e.target.value as "ACTIVE" | "CLOSED" | "DRAFT" })}
@@ -363,8 +537,10 @@ export function JobsClient() {
           </div>
 
           <div className="flex justify-end gap-3 pt-2">
-            <Button variant="secondary" type="button" onClick={() => { setShowCreate(false); setNewJob(EMPTY_JOB); setQuestions([]); }}>Cancel</Button>
-            <Button type="submit" isLoading={createJob.isPending}>Publish Job</Button>
+            <Button variant="secondary" type="button" onClick={closeForm}>Cancel</Button>
+            <Button type="submit" isLoading={createJob.isPending || updateJob.isPending} disabled={uploadingImage}>
+              {editingId ? "Save Changes" : "Publish Job"}
+            </Button>
           </div>
         </form>
       </Modal>

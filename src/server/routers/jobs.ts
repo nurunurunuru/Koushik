@@ -3,6 +3,11 @@ import { TRPCError } from "@trpc/server";
 import { createTRPCRouter, baseProcedure, adminProcedure } from "@/src/server/trpc";
 import { generateJobPost, generateInterviewQuestions } from "@/src/lib/gemini";
 
+// Only images uploaded through /api/upload-job-image are accepted.
+const jobImageUrl = z
+  .string()
+  .regex(/^\/api\/job-images\/[a-f0-9-]+\.(jpg|png|webp)$/i, "Invalid image");
+
 // Throws unless the job exists and belongs to the logged-in admin.
 async function assertOwnsJob(
   ctx: { prisma: typeof import("@/src/server/db").prisma; user: { id: string } },
@@ -30,11 +35,15 @@ export const jobsRouter = createTRPCRouter({
   }),
 
   // Candidate portal: only ACTIVE jobs are visible to applicants
+  // Everything the company posted (image, description, requirements, interview date...) is
+  // visible to candidates, except the secret interview questions.
   getAllPublic: baseProcedure.query(async ({ ctx }) => {
-    return ctx.prisma.job.findMany({
+    const jobs = await ctx.prisma.job.findMany({
       where: { status: "ACTIVE" },
       orderBy: { createdAt: "desc" },
     });
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    return jobs.map(({ interviewQuestions, ...publicJob }) => publicJob);
   }),
 
   getById: adminProcedure
@@ -103,6 +112,8 @@ export const jobsRouter = createTRPCRouter({
         location: z.string().optional(),
         status: z.enum(["ACTIVE", "CLOSED", "DRAFT"]).default("ACTIVE"),
         aiGenerated: z.boolean().optional(),
+        imageUrl: jobImageUrl.optional(),
+        interviewDate: z.date().optional(),
         interviewQuestions: z.array(z.string()).optional(),
       })
     )
@@ -134,6 +145,8 @@ export const jobsRouter = createTRPCRouter({
         department: z.string().optional(),
         location: z.string().optional(),
         status: z.enum(["ACTIVE", "CLOSED", "DRAFT"]).optional(),
+        imageUrl: jobImageUrl.nullable().optional(),
+        interviewDate: z.date().nullable().optional(),
         interviewQuestions: z.array(z.string()).optional(),
       })
     )

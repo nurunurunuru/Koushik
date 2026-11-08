@@ -5,14 +5,14 @@ import { useTRPC } from "@/src/trpc/client";
 import { Card, CardContent } from "@/src/components/ui/card";
 import { Badge } from "@/src/components/ui/badge";
 import { Button } from "@/src/components/ui/button";
-import { timeAgo } from "@/src/lib/utils";
+import { timeAgo, formatDateTime, isInterviewOpen } from "@/src/lib/utils";
 import Link from "next/link";
 
 const STATUS_LABELS: Record<string, string> = {
   APPLIED: "Application received — awaiting AI review",
   AI_REVIEWED: "AI reviewed your resume — awaiting recruiter decision",
   INTERVIEW_APPROVED: "Approved for interview",
-  INTERVIEW_INVITED: "Interview invitation sent — check your email",
+  INTERVIEW_INVITED: "Accepted! Your interview invitation was sent to your email",
   INTERVIEW_COMPLETED: "Interview completed — awaiting decision",
   HIRED: "Congratulations — moving forward!",
   REJECTED: "Not selected for this role",
@@ -50,10 +50,17 @@ export function PortalApplicationsClient() {
                     Applied {timeAgo(app.createdAt)}
                   </p>
                   <p className="text-sm text-gray-600 mt-2">{STATUS_LABELS[app.status] ?? app.status}</p>
+                  {app.status === "INTERVIEW_INVITED" && app.job.interviewDate && (
+                    <p className="text-sm font-medium text-primary-700 mt-1">
+                      Interview date: {formatDateTime(app.job.interviewDate)}
+                    </p>
+                  )}
                 </div>
                 {app.status === "INTERVIEW_INVITED" && (
                   <Link href={`/portal/interview/${app.id}`}>
-                    <Button>Start Interview</Button>
+                    <Button>
+                      {isInterviewOpen(app.job.interviewDate) ? "Start Interview" : "Interview Details"}
+                    </Button>
                   </Link>
                 )}
                 {app.status === "INTERVIEW_COMPLETED" && app.calls[0] && (

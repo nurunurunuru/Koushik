@@ -26,7 +26,7 @@ type CandidateWithJob = {
   name: string;
   email: string;
   matchScore: number | null;
-  job: { title: string };
+  job: { title: string; interviewDate?: Date | null };
 };
 
 // Minimum AI match score (%) for a candidate to be auto-invited to interview.
@@ -48,6 +48,7 @@ async function inviteCandidate(prisma: Db, candidate: CandidateWithJob) {
       jobTitle: candidate.job.title,
       interviewUrl,
       matchScore: candidate.matchScore ?? 0,
+      interviewDate: candidate.job.interviewDate ?? null,
     });
   } catch (e) {
     emailSent = false;
@@ -355,13 +356,21 @@ export const candidatesRouter = createTRPCRouter({
         const withJob = { ...updatedCandidate, job };
         if (analysis.matchScore >= AUTO_SCREEN_THRESHOLD) {
           const invited = await inviteCandidate(ctx.prisma, withJob);
-          return { ...invited, decision: "INVITED" as const };
+          return {
+            ...invited,
+            decision: "INVITED" as const,
+            interviewDate: job.interviewDate,
+          };
         }
         const rejected = await rejectCandidate(ctx.prisma, withJob);
-        return { ...rejected, decision: "REJECTED" as const };
+        return {
+          ...rejected,
+          decision: "REJECTED" as const,
+          interviewDate: job.interviewDate,
+        };
       } catch (autoErr) {
         console.error("Auto-screening failed, left for manual review:", autoErr);
-        return { ...updatedCandidate, decision: null };
+        return { ...updatedCandidate, decision: null, interviewDate: job.interviewDate };
       }
 
     } catch (err) {
@@ -372,7 +381,7 @@ export const candidatesRouter = createTRPCRouter({
       console.error("=================================");
 
       // Candidate is still saved
-      return { ...candidate, decision: null };
+      return { ...candidate, decision: null, interviewDate: job.interviewDate };
     }
   }),
 
@@ -381,7 +390,16 @@ export const candidatesRouter = createTRPCRouter({
       where: { userId: ctx.user.id },
       orderBy: { createdAt: "desc" },
       include: {
-        job: { select: { id: true, title: true, department: true, location: true } },
+        job: {
+          select: {
+            id: true,
+            title: true,
+            department: true,
+            location: true,
+            imageUrl: true,
+            interviewDate: true,
+          },
+        },
         calls: { orderBy: { createdAt: "desc" }, take: 1 },
       },
     });
@@ -397,6 +415,10 @@ export const candidatesRouter = createTRPCRouter({
       });
       if (!candidate || candidate.userId !== ctx.user.id) {
         throw new TRPCError({ code: "FORBIDDEN" });
+      }
+      // Interview questions stay hidden until the candidate has actually been approved.
+      if (!candidate.interviewApproved) {
+        return { ...candidate, job: { ...candidate.job, interviewQuestions: null } };
       }
       return candidate;
     }),

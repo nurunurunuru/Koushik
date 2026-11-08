@@ -2914,7 +2914,7 @@ Do not wait for another message.
 
       {/* QUESTIONS PREVIEW */}
 
-      {questions.length > 0 &&
+      {/* {questions.length > 0 &&
         !isInterviewActive &&
         !securityWarning && (
           <div className="border-b border-slate-100 bg-slate-50 px-6 py-5">
@@ -2941,7 +2941,7 @@ Do not wait for another message.
               )}
             </div>
           </div>
-        )}
+        )} */}
 
       {/* LIVE STATUS */}
 
