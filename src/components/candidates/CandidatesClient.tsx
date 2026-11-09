@@ -10,14 +10,16 @@ import { Badge } from "@/src/components/ui/badge";
 import { Input } from "@/src/components/ui/input";
 import { Select } from "@/src/components/ui/select";
 import { Modal } from "@/src/components/ui/modal";
-import { timeAgo, cn } from "@/src/lib/utils";
+import { timeAgo, cn, formatDateTime } from "@/src/lib/utils";
+import { InterviewRecord } from "@/src/components/interviews/InterviewRecord";
+import Link from "next/link";
 
 const STATUS_FILTERS = [
   { value: "ALL", label: "All Statuses" },
   { value: "APPLIED", label: "Applied" },
   { value: "AI_REVIEWED", label: "AI Reviewed" },
-  { value: "INTERVIEW_APPROVED", label: "Interview Approved" },
-  { value: "INTERVIEW_INVITED", label: "Interview Invited" },
+  { value: "SHORTLISTED", label: "Shortlisted" },
+  { value: "INTERVIEW_SCHEDULED", label: "Interview Scheduled" },
   { value: "INTERVIEW_COMPLETED", label: "Interview Completed" },
   { value: "HIRED", label: "Hired" },
   { value: "REJECTED", label: "Rejected" },
@@ -28,17 +30,6 @@ interface ResumeAnalysis {
   strengths: string[];
   gaps: string[];
   recommendation: string;
-}
-
-interface InterviewReport {
-  overallScore: number;
-  recommendation: string;
-  summary: string;
-  strengths: string[];
-  concerns: string[];
-  skillAssessment: { skill: string; rating: number; note: string }[];
-  communicationScore: number;
-  technicalScore: number;
 }
 
 function MatchScoreBadge({ score }: { score: number | null | undefined }) {
@@ -68,22 +59,6 @@ function CandidatesContent() {
     queryClient.invalidateQueries({ queryKey: trpc.candidates.getAll.queryKey() });
   };
 
-  const approveForInterview = useMutation(
-    trpc.candidates.approveForInterview.mutationOptions({
-      onSuccess: (data: any) => {
-        invalidate();
-        if (data?.emailSent === false) {
-          setActionNotice({
-            type: "warning",
-            message: "Candidate approved, but the invitation email failed to send. Check your GMAIL_USER / GMAIL_APP_PASSWORD in .env and the server terminal for details.",
-          });
-        } else {
-          setActionNotice(null);
-        }
-      },
-      onError: (err) => setActionNotice({ type: "error", message: err.message || "Failed to approve candidate." }),
-    })
-  );
   const rejectApplication = useMutation(
     trpc.candidates.rejectApplication.mutationOptions({
       onSuccess: invalidate,
@@ -115,7 +90,7 @@ function CandidatesContent() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Candidates</h1>
         <p className="text-sm text-gray-500 mt-1">
-          {jobIdFilter ? "Applicants for a specific position" : "Review AI-scored applications and interview reports"}
+          {jobIdFilter ? "Applicants for a specific position" : "Review AI-scored applications and interview records"}
         </p>
       </div>
 
@@ -295,44 +270,30 @@ function CandidatesContent() {
                         </div>
                       )}
 
-                      {candidate.calls?.[0]?.aiReport && (
-                        <InterviewReportView report={JSON.parse(candidate.calls[0].aiReport)} />
+                      {candidate.interviewAt && (
+                        <p className="text-xs text-gray-600">
+                          Interview: <strong>{formatDateTime(candidate.interviewAt)}</strong>
+                          {candidate.interviewOrder ? ` · No. ${candidate.interviewOrder}` : ""}
+                        </p>
                       )}
-                      {candidate.calls?.[0]?.videoUrl && (
-  <div
-    className="rounded-lg border border-gray-200 bg-gray-50 p-4"
-    onClick={(e) => e.stopPropagation()}
-  >
-    <div className="mb-3">
-      <p className="text-sm font-semibold text-gray-900">
-        Interview Recording
-      </p>
-      <p className="mt-1 text-xs text-gray-500">
-        Recorded video of the AI interview
-      </p>
-    </div>
 
-    <video
-      controls
-      preload="metadata"
-      src={candidate.calls[0].videoUrl}
-      className="w-full max-w-3xl rounded-lg bg-black"
-    >
-      Your browser does not support video playback.
-    </video>
-  </div>
-)}
+                      {candidate.finalScore != null && (
+                        <InterviewRecord
+                          call={candidate.calls?.[0]}
+                          aiScore={candidate.aiScore}
+                          boardScore={candidate.boardScore}
+                          finalScore={candidate.finalScore}
+                        />
+                      )}
 
                       <div className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                        {(candidate.status === "APPLIED" || candidate.status === "AI_REVIEWED") && (
+                        {(candidate.status === "APPLIED" ||
+                          candidate.status === "AI_REVIEWED" ||
+                          candidate.status === "SHORTLISTED") && (
                           <>
-                            <Button
-                              size="sm"
-                              onClick={() => approveForInterview.mutate({ id: candidate.id })}
-                              isLoading={approveForInterview.isPending}
-                            >
-                              Approve & Send Interview Invite
-                            </Button>
+                            <Link href="/interviews">
+                              <Button size="sm">Select &amp; schedule in Interviews</Button>
+                            </Link>
                             <Button
                               size="sm"
                               variant="danger"
@@ -343,14 +304,28 @@ function CandidatesContent() {
                             </Button>
                           </>
                         )}
-                        {candidate.status === "INTERVIEW_COMPLETED" && (
+                        {candidate.status === "INTERVIEW_SCHEDULED" && (
+                          <Link href="/interviews">
+                            <Button size="sm" variant="secondary">
+                              Go to live interview
+                            </Button>
+                          </Link>
+                        )}
+                        {candidate.status === "INTERVIEW_COMPLETED" && candidate.boardScore == null && (
+                          <Link href="/interviews">
+                            <Button size="sm" variant="secondary">
+                              Waiting for board mark — open Board Review
+                            </Button>
+                          </Link>
+                        )}
+                        {candidate.status === "INTERVIEW_COMPLETED" && candidate.boardScore != null && (
                           <>
                             <Button
                               size="sm"
                               onClick={() => finalDecision.mutate({ id: candidate.id, decision: "HIRED" })}
                               isLoading={finalDecision.isPending}
                             >
-                              Move to Office Interview
+                              Hire
                             </Button>
                             <Button
                               size="sm"
@@ -389,71 +364,6 @@ function CandidatesContent() {
             </div>
           </CardContent>
         </Card>
-      )}
-    </div>
-  );
-}
-
-function InterviewReportView({ report }: { report: InterviewReport }) {
-  const recColor =
-    {
-      STRONG_YES: "text-green-700 bg-green-50",
-      YES: "text-lime-700 bg-lime-50",
-      MAYBE: "text-yellow-700 bg-yellow-50",
-      NO: "text-red-700 bg-red-50",
-    }[report.recommendation] ?? "text-gray-700 bg-gray-50";
-
-  return (
-    <div className="bg-accent-50/50 rounded-lg p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-gray-900">AI Interview Report</p>
-        <span className={cn("text-xs font-semibold px-2 py-0.5 rounded-full", recColor)}>
-          {report.recommendation?.replace("_", " ")} · {report.overallScore}/100
-        </span>
-      </div>
-      <p className="text-sm text-gray-700">{report.summary}</p>
-      <div className="grid grid-cols-2 gap-3 text-xs">
-        <div className="bg-white rounded-lg p-2 text-center">
-          <p className="font-semibold text-gray-900">{report.communicationScore}</p>
-          <p className="text-gray-500">Communication</p>
-        </div>
-        <div className="bg-white rounded-lg p-2 text-center">
-          <p className="font-semibold text-gray-900">{report.technicalScore}</p>
-          <p className="text-gray-500">Technical</p>
-        </div>
-      </div>
-      {report.strengths?.length > 0 && (
-        <div>
-          <p className="text-xs font-medium text-green-700">Strengths</p>
-          <ul className="text-xs text-gray-600 list-disc list-inside">
-            {report.strengths.map((s, i) => (
-              <li key={i}>{s}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {report.concerns?.length > 0 && (
-        <div>
-          <p className="text-xs font-medium text-red-700">Concerns</p>
-          <ul className="text-xs text-gray-600 list-disc list-inside">
-            {report.concerns.map((c, i) => (
-              <li key={i}>{c}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {report.skillAssessment?.length > 0 && (
-        <div>
-          <p className="text-xs font-medium text-gray-700 mb-1">Skill Assessment</p>
-          <div className="space-y-1">
-            {report.skillAssessment.map((s, i) => (
-              <div key={i} className="flex items-center justify-between text-xs bg-white rounded-lg px-2 py-1">
-                <span className="text-gray-700">{s.skill}</span>
-                <span className="text-gray-500">{"★".repeat(s.rating)}{"☆".repeat(5 - s.rating)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
       )}
     </div>
   );

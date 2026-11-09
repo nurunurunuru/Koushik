@@ -4,17 +4,15 @@ import { useQuery } from "@tanstack/react-query";
 import { useTRPC } from "@/src/trpc/client";
 import { Card, CardContent } from "@/src/components/ui/card";
 import { Badge } from "@/src/components/ui/badge";
-import { Button } from "@/src/components/ui/button";
-import { timeAgo, formatDateTime, isInterviewOpen } from "@/src/lib/utils";
-import Link from "next/link";
+import { timeAgo, formatDateTime } from "@/src/lib/utils";
 
 const STATUS_LABELS: Record<string, string> = {
   APPLIED: "Application received — awaiting AI review",
-  AI_REVIEWED: "AI reviewed your resume — awaiting recruiter decision",
-  INTERVIEW_APPROVED: "Approved for interview",
-  INTERVIEW_INVITED: "Accepted! Your interview invitation was sent to your email",
-  INTERVIEW_COMPLETED: "Interview completed — awaiting decision",
-  HIRED: "Congratulations — moving forward!",
+  AI_REVIEWED: "Your resume is being reviewed by the company",
+  SHORTLISTED: "Shortlisted! Your resume matched the job. The company will email you if you are selected for the interview",
+  INTERVIEW_SCHEDULED: "You are selected for the interview! Please attend in person at the date and time below (details were emailed to you)",
+  INTERVIEW_COMPLETED: "Interview completed — the company will announce the decision",
+  HIRED: "Congratulations — you got the job!",
   REJECTED: "Not selected for this role",
 };
 
@@ -50,24 +48,23 @@ export function PortalApplicationsClient() {
                     Applied {timeAgo(app.createdAt)}
                   </p>
                   <p className="text-sm text-gray-600 mt-2">{STATUS_LABELS[app.status] ?? app.status}</p>
-                  {app.status === "INTERVIEW_INVITED" && app.job.interviewDate && (
+                  {app.status === "INTERVIEW_SCHEDULED" && app.interviewAt && (
                     <p className="text-sm font-medium text-primary-700 mt-1">
-                      Interview date: {formatDateTime(app.job.interviewDate)}
+                      Interview: {formatDateTime(app.interviewAt)}
+                      {app.interviewOrder ? ` · Your number: ${app.interviewOrder}` : ""}
                     </p>
                   )}
+                  {app.status === "INTERVIEW_SCHEDULED" && app.interviewLink && (
+                    <a
+                      href={app.interviewLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-1 inline-block text-sm font-medium text-primary-600 underline"
+                    >
+                      Open interview link
+                    </a>
+                  )}
                 </div>
-                {app.status === "INTERVIEW_INVITED" && (
-                  <Link href={`/portal/interview/${app.id}`}>
-                    <Button>
-                      {isInterviewOpen(app.job.interviewDate) ? "Start Interview" : "Interview Details"}
-                    </Button>
-                  </Link>
-                )}
-                {app.status === "INTERVIEW_COMPLETED" && app.calls[0] && (
-                  <Link href={`/portal/interview/${app.id}`}>
-                    <Button variant="secondary">View Interview</Button>
-                  </Link>
-                )}
               </CardContent>
             </Card>
           ))}

@@ -179,7 +179,7 @@ export const jobsRouter = createTRPCRouter({
       ctx.prisma.job.count({ where: { adminId, status: "ACTIVE" } }),
       ctx.prisma.job.count({ where: { adminId } }),
       ctx.prisma.candidate.count({ where: { job: { adminId } } }),
-      ctx.prisma.candidate.count({ where: { job: { adminId }, status: "AI_REVIEWED" } }),
+      ctx.prisma.candidate.count({ where: { job: { adminId }, status: "SHORTLISTED" } }),
       ctx.prisma.candidate.count({ where: { job: { adminId }, status: "INTERVIEW_COMPLETED" } }),
     ]);
     return { active, total, candidates, pendingReview, interviewsDone };

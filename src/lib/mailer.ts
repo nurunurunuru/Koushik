@@ -44,48 +44,56 @@ function formatInterviewDate(date: Date) {
   return `${text} (${timeZone})`;
 }
 
-export async function sendInterviewInvitationEmail(params: {
+export async function sendInterviewScheduleEmail(params: {
   to: string;
   candidateName: string;
   jobTitle: string;
-  interviewUrl: string;
-  matchScore: number;
-  interviewDate?: Date | null;
+  interviewAt: Date;
+  order: number;
+  venue?: string | null;
+  portalUrl: string; // link to the candidate's account page with the interview details
+  meetingLink?: string | null; // optional extra link added by the company
 }) {
   const jobTitle = escapeHtml(params.jobTitle);
   const candidateName = escapeHtml(params.candidateName);
-  const scheduled = params.interviewDate ? new Date(params.interviewDate) : null;
-  const isFuture = !!scheduled && scheduled.getTime() > Date.now();
-
-  const scheduleBlock = scheduled
-    ? `<div style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;padding:12px 16px;margin:16px 0;">
-         <strong>Interview date &amp; time:</strong><br/>${escapeHtml(formatInterviewDate(scheduled))}
-       </div>
-       <p>${
-         isFuture
-           ? "The interview room opens at the date and time above. You can use the button below (or the <strong>My Applications</strong> page in your account) once that time arrives."
-           : "The interview room is open now. Click the button below when you're ready."
-       }</p>`
-    : `<p>Click the button below whenever you're ready.</p>`;
+  const venue = params.venue?.trim() ? escapeHtml(params.venue.trim()) : null;
+  const meetingLink = params.meetingLink?.trim() ? escapeHtml(params.meetingLink.trim()) : null;
 
   const html = `
   <div style="font-family: sans-serif; max-width: 560px; margin: 0 auto; line-height: 1.6;">
-    <h2 style="color:#4f46e5;">You're invited to interview for ${jobTitle}!</h2>
+    <h2 style="color:#4f46e5;">You're selected for the interview: ${jobTitle}</h2>
     <p>Hi ${candidateName},</p>
-    <p>Great news! After reviewing your application, we'd like to invite you to the next step: a short
-    AI-powered voice interview for the <strong>${jobTitle}</strong> position.</p>
-    <p>Your resume matched <strong>${params.matchScore}%</strong> of the role's requirements.</p>
-    ${scheduleBlock}
-    <p>Please find a quiet place with a working microphone. It takes about 10-15 minutes.</p>
-    <p style="text-align:center; margin: 28px 0;">
-      <a href="${params.interviewUrl}" style="background:#4f46e5;color:#fff;padding:12px 24px;
-      border-radius:8px;text-decoration:none;font-weight:600;">Start My Interview</a>
+    <p>Congratulations! After reviewing the applications, the company has selected you for the interview
+    for the <strong>${jobTitle}</strong> position.</p>
+    <div style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;padding:12px 16px;margin:16px 0;">
+      <strong>Interview date &amp; time:</strong><br/>${escapeHtml(formatInterviewDate(params.interviewAt))}<br/>
+      ${venue ? `<strong>Venue:</strong> ${venue}<br/>` : ""}
+      <strong>Your interview number:</strong> ${params.order}
+    </div>
+    <p>The interview is held <strong>in person in front of the company's board members</strong>.
+    Please arrive a little early. Candidates are called one by one by name, and an AI interviewer will
+    ask you questions live along with the board.</p>
+    <p style="margin:24px 0 8px;">
+      <a href="${params.portalUrl}"
+         style="background:#4f46e5;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;display:inline-block;">
+        View my interview details
+      </a>
     </p>
-    <p style="color:#6b7280;font-size:13px;">If the button doesn't work, copy this link into your browser:<br/>
-    ${params.interviewUrl}</p>
-    <p>Good luck!<br/>The Hiring Team</p>
+    ${
+      meetingLink
+        ? `<p style="margin:8px 0;">
+      <a href="${meetingLink}"
+         style="background:#0f172a;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;display:inline-block;">
+        Open interview link
+      </a>
+    </p>`
+        : ""
+    }
+    <p style="font-size:12px;color:#6b7280;">If the buttons do not work, copy this link into your browser:<br/>
+    ${escapeHtml(params.portalUrl)}${meetingLink ? `<br/>${meetingLink}` : ""}</p>
+    <p>Good luck!</p>
   </div>`;
-  await sendMail(params.to, `Interview Invitation: ${params.jobTitle}`, html);
+  await sendMail(params.to, `Interview Schedule: ${params.jobTitle}`, html);
 }
 
 export async function sendRejectionEmail(params: {

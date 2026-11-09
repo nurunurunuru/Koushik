@@ -34,15 +34,6 @@ export function formatDateTime(date: Date | string | null | undefined): string {
 }
 
 /**
- * True when the company's interview date/time has arrived.
- * Jobs without an interview date are treated as open immediately.
- */
-export function isInterviewOpen(date: Date | string | null | undefined): boolean {
-  if (!date) return true;
-  return new Date(date).getTime() <= Date.now();
-}
-
-/**
  * Format a date to a relative time string (e.g., "2 hours ago")
  */
 export function timeAgo(date: Date | string | null | undefined): string {
@@ -145,6 +136,16 @@ export function getStatusColor(
       dot: "bg-indigo-500",
     },
     INTERVIEW_INVITED: {
+      bg: "bg-cyan-100",
+      text: "text-cyan-800",
+      dot: "bg-cyan-500",
+    },
+    SHORTLISTED: {
+      bg: "bg-amber-100",
+      text: "text-amber-800",
+      dot: "bg-amber-500",
+    },
+    INTERVIEW_SCHEDULED: {
       bg: "bg-cyan-100",
       text: "text-cyan-800",
       dot: "bg-cyan-500",

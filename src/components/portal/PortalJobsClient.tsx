@@ -51,8 +51,7 @@ export function PortalJobsClient() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState<{
     matchScore?: number | null;
-    decision?: "INVITED" | "REJECTED" | null;
-    interviewDate?: Date | null;
+    decision?: "SHORTLISTED" | "REJECTED" | null;
   } | null>(null);
   const [uploadedFileName, setUploadedFileName] = useState("");
   const [resumeUrl, setResumeUrl] = useState("");
@@ -68,7 +67,6 @@ export function PortalJobsClient() {
         setSuccess({
           matchScore: data.matchScore,
           decision: data.decision,
-          interviewDate: data.interviewDate,
         });
         setResumeText("");
         setPhone("");
@@ -225,7 +223,7 @@ export function PortalJobsClient() {
                   )}
                   {job.interviewDate && (
                     <p className="text-xs font-medium text-indigo-700 bg-indigo-50 rounded-md px-2 py-1 inline-block">
-                      AI interview: {formatDateTime(job.interviewDate)}
+                      Planned interview: {formatDateTime(job.interviewDate)}
                     </p>
                   )}
                   <p className="text-xs text-gray-400">Posted {timeAgo(job.createdAt)}</p>
@@ -296,9 +294,9 @@ export function PortalJobsClient() {
 
               {detailJob.interviewDate && (
                 <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
-                  <strong>AI interview date:</strong> {formatDateTime(detailJob.interviewDate)}
+                  <strong>Planned interview date:</strong> {formatDateTime(detailJob.interviewDate)}
                   <p className="text-xs text-indigo-700 mt-0.5">
-                    If your resume matches 50% or more, you'll get the interview link by email and in your account.
+                    If your resume matches 50% or more you are shortlisted. The company selects candidates and emails the exact interview time. The interview is held in person in front of the company's board.
                   </p>
                 </div>
               )}
@@ -364,10 +362,8 @@ export function PortalJobsClient() {
                 {typeof success.matchScore === "number" && (
                   <> Your match score: <strong>{success.matchScore}%</strong>.</>
                 )}
-                {success.decision === "INVITED"
-                  ? success.interviewDate
-                    ? ` Great match! You're accepted. We've emailed you the interview link — your interview is on ${formatDateTime(success.interviewDate)}. You can also start it from My Applications at that time.`
-                    : " Great match! You're accepted. We've emailed you the interview link — you can also start it from My Applications."
+                {success.decision === "SHORTLISTED"
+                  ? " Great match! You are shortlisted. The company will choose the candidates for the interview, and if you are selected you will get the interview date and time by email and in My Applications."
                   : success.decision === "REJECTED"
                   ? " Unfortunately your profile isn't a close enough match for this role. We've emailed you the update."
                   : " You'll receive an email once a recruiter reviews your application."}

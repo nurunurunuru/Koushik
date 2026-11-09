@@ -36,19 +36,30 @@ A full recruitment platform with two portals:
 7. **Admin makes the final call** — Move to Office Interview (hired) or Reject — and
    the candidate is emailed automatically either way.
 
-## Job image & interview date (new)
+## Hiring flow (live board interview)
 
-- When an admin posts (or edits) a job they can **upload an image** (JPG/PNG/WEBP, max 5MB) and must set the
-  **Interview Date & Time**. Images go to a private Supabase bucket `job-images` (created automatically on the
-  first upload) and are served through `/api/job-images/<file>`.
-- Candidates see **everything** from the post on `/portal/jobs` (image, description, requirements,
-  responsibilities, skills, salary, interview date) via **View Details**. Secret interview questions are not exposed.
-- Resume match **>= 50%** -> accepted: the email contains the interview date and link, and the same interview
-  appears in **My Applications**. **< 50%** -> rejected by email.
-- The interview room (and the `calls.start` API) stays locked until the interview date/time, with a live countdown;
-  **Start Interview** works automatically when the time arrives.
-- Optional `.env`: `APP_TIMEZONE` (default `Asia/Dhaka`) controls how the date is written inside emails.
-- After pulling these changes run: `npx prisma generate` (MongoDB needs no migration).
+1. **Admin posts a job** (with an optional image and an optional planned interview date).
+2. **Candidate account = apply only.** Candidates browse jobs, read every detail (View Details) and apply with a resume.
+3. **Resume match >= 50%** -> `SHORTLISTED`. **Below 50%** -> auto-rejected by email.
+4. **Interviews -> 1. Select & Schedule:** the company picks the top 10 / top 15 / any N shortlisted
+   candidates, chooses the interview date + time (and venue), and the selected candidates get an email
+   with the schedule and their interview number.
+5. **Interviews -> 2. Live Interview:** on the day the board opens this page. Candidates are called one by one:
+   click the candidate's name (announced aloud and shown on screen), press **Start Interview**.
+   - **Part 1 - AI interview:** the AI asks questions, the candidate answers. When the AI says
+     "This concludes the AI interview." the call ends and the AI transcript + **AI mark** are saved automatically.
+   - **Part 2 - Board questions:** a board member types a question, it appears for the candidate at the bottom of the
+     page, and the candidate replies (speaks - typed automatically - or types). Replies are **not** marked automatically.
+6. **Interviews -> 3. Board Review:** the board reads every candidate's replies to its questions and gives
+   **one board mark (0-100)** (+ optional comment). **Final mark** = 50% AI mark + 50% board mark
+   (see `src/lib/scoring.ts`).
+7. **Interviews -> 4. Results & Decision:** ranked list by final mark (available after the board mark is given); the board presses **Hire** or **Reject**
+   (candidate is emailed). The full text record (Q&A transcript, AI summary, board questions/points) can be opened
+   by the admin here and in the Candidates page.
+
+No camera and no video recording are used anywhere.
+Optional `.env`: `APP_TIMEZONE` (default `Asia/Dhaka`) for the date written in emails.
+After pulling these changes run: `npx prisma generate` (MongoDB needs no migration).
 
 ## Setup
 

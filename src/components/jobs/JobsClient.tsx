@@ -458,16 +458,15 @@ export function JobsClient() {
 
             <div className="space-y-1">
               <Input
-                label="Interview Date & Time"
+                label="Planned Interview Date & Time (optional)"
                 id="interviewDate"
                 type="datetime-local"
                 value={newJob.interviewDate}
                 onChange={(e) => setNewJob({ ...newJob, interviewDate: e.target.value })}
-                required
               />
               <p className="text-xs text-gray-400">
-                Accepted candidates (resume match 50% or more) get this date in their email and account.
-                Their AI interview unlocks at this date and time.
+                Shown to candidates on the job post. Later, in the Interviews page, you choose the best
+                candidates (top 10 / 15...) and give them the exact interview date and time.
               </p>
             </div>
           </div>

@@ -6,7 +6,7 @@ import {
   candidateProcedure,
 } from "@/src/server/trpc";
 import { analyzeResumeLocally } from "@/src/lib/resumeAI";
-import { sendInterviewInvitationEmail, sendRejectionEmail, sendHiredEmail } from "@/src/lib/mailer";
+import { sendInterviewScheduleEmail, sendRejectionEmail, sendHiredEmail } from "@/src/lib/mailer";
 
 // Throws unless the candidate applied to a job owned by the logged-in admin.
 async function assertOwnsCandidate(
@@ -26,45 +26,12 @@ type CandidateWithJob = {
   name: string;
   email: string;
   matchScore: number | null;
-  job: { title: string; interviewDate?: Date | null };
+  job: { title: string };
 };
 
-// Minimum AI match score (%) for a candidate to be auto-invited to interview.
+// Minimum AI resume-match score (%) for a candidate to be SHORTLISTED.
 // Anything below is auto-rejected. Override with AUTO_SCREEN_THRESHOLD in .env.
 const AUTO_SCREEN_THRESHOLD = Number(process.env.AUTO_SCREEN_THRESHOLD ?? 50);
-
-// Sends the interview invite email and moves the candidate to INTERVIEW_INVITED.
-async function inviteCandidate(prisma: Db, candidate: CandidateWithJob) {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-  const interviewUrl = `${appUrl}/login?callbackUrl=${encodeURIComponent(
-    `/portal/interview/${candidate.id}`
-  )}`;
-
-  let emailSent = true;
-  try {
-    await sendInterviewInvitationEmail({
-      to: candidate.email,
-      candidateName: candidate.name,
-      jobTitle: candidate.job.title,
-      interviewUrl,
-      matchScore: candidate.matchScore ?? 0,
-      interviewDate: candidate.job.interviewDate ?? null,
-    });
-  } catch (e) {
-    emailSent = false;
-    console.error("Failed to send interview invitation email:", e);
-  }
-
-  const updated = await prisma.candidate.update({
-    where: { id: candidate.id },
-    data: {
-      interviewApproved: true,
-      status: "INTERVIEW_INVITED",
-      invitedAt: new Date(),
-    },
-  });
-  return { ...updated, emailSent };
-}
 
 // Sends the rejection email and moves the candidate to REJECTED.
 async function rejectCandidate(prisma: Db, candidate: CandidateWithJob) {
@@ -140,8 +107,8 @@ export const candidatesRouter = createTRPCRouter({
           .enum([
             "APPLIED",
             "AI_REVIEWED",
-            "INTERVIEW_APPROVED",
-            "INTERVIEW_INVITED",
+            "SHORTLISTED",
+            "INTERVIEW_SCHEDULED",
             "INTERVIEW_COMPLETED",
             "HIRED",
             "REJECTED",
@@ -168,17 +135,68 @@ export const candidatesRouter = createTRPCRouter({
       });
     }),
 
-  // Admin gives permission -> AI emails the candidate an interview invitation link
-  approveForInterview: adminProcedure
-    .input(z.object({ id: z.string() }))
+  // The company picks the candidates it wants (top 10 / top 15 / any it likes) from the
+  // shortlisted ones and gives them one interview date + time. Each selected candidate gets
+  // an email with the schedule and an interview number (the order they are called in).
+  scheduleInterviews: adminProcedure
+    .input(
+      z.object({
+        candidateIds: z.array(z.string()).min(1).max(100),
+        interviewAt: z.date(),
+        venue: z.string().max(200).optional(),
+        meetingLink: z.string().url("Please enter a valid link (https://...)").max(500).optional(),
+      })
+    )
     .mutation(async ({ ctx, input }) => {
-      const candidate = await ctx.prisma.candidate.findFirst({
-        where: { id: input.id, job: { adminId: ctx.user.id } },
+      const candidates = await ctx.prisma.candidate.findMany({
+        where: { id: { in: input.candidateIds }, job: { adminId: ctx.user.id } },
         include: { job: true },
       });
-      if (!candidate) throw new TRPCError({ code: "NOT_FOUND" });
+      if (candidates.length === 0) throw new TRPCError({ code: "NOT_FOUND" });
 
-      return inviteCandidate(ctx.prisma, candidate);
+      const byId = new Map(candidates.map((c) => [c.id, c]));
+      const emailFailed: string[] = [];
+      let order = 0;
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || "http://localhost:3000";
+      // Candidate logs in and lands on My Applications, where the interview details are shown.
+      const portalUrl = `${appUrl}/login?callbackUrl=${encodeURIComponent("/portal/applications")}`;
+
+      // Keep the order the admin selected them in (best candidate first).
+      for (const id of input.candidateIds) {
+        const c = byId.get(id);
+        if (!c) continue;
+        if (["REJECTED", "HIRED", "INTERVIEW_COMPLETED"].includes(c.status)) continue;
+        order += 1;
+
+        try {
+          await sendInterviewScheduleEmail({
+            to: c.email,
+            candidateName: c.name,
+            jobTitle: c.job.title,
+            interviewAt: input.interviewAt,
+            order,
+            venue: input.venue,
+            portalUrl,
+            meetingLink: input.meetingLink,
+          });
+        } catch (e) {
+          emailFailed.push(c.name);
+          console.error("Failed to send interview schedule email:", e);
+        }
+
+        await ctx.prisma.candidate.update({
+          where: { id: c.id },
+          data: {
+            status: "INTERVIEW_SCHEDULED",
+            interviewAt: input.interviewAt,
+            interviewOrder: order,
+            interviewLink: input.meetingLink ?? null,
+            invitedAt: new Date(),
+          },
+        });
+      }
+
+      return { scheduled: order, emailFailed };
     }),
 
   // Admin rejects at the resume-review stage (before interview)
@@ -226,17 +244,29 @@ export const candidatesRouter = createTRPCRouter({
 
   getStats: adminProcedure.query(async ({ ctx }) => {
     const job = { adminId: ctx.user.id };
-    const [applied, aiReviewed, interviewInvited, interviewCompleted, hired, rejected] =
+    const count = (status: string) => ctx.prisma.candidate.count({ where: { job, status } });
+    const [applied, aiReviewed, shortlisted, interviewScheduled, interviewCompleted, hired, rejected] =
       await Promise.all([
-        ctx.prisma.candidate.count({ where: { job, status: "APPLIED" } }),
-        ctx.prisma.candidate.count({ where: { job, status: "AI_REVIEWED" } }),
-        ctx.prisma.candidate.count({ where: { job, status: "INTERVIEW_INVITED" } }),
-        ctx.prisma.candidate.count({ where: { job, status: "INTERVIEW_COMPLETED" } }),
-        ctx.prisma.candidate.count({ where: { job, status: "HIRED" } }),
-        ctx.prisma.candidate.count({ where: { job, status: "REJECTED" } }),
+        count("APPLIED"),
+        count("AI_REVIEWED"),
+        count("SHORTLISTED"),
+        count("INTERVIEW_SCHEDULED"),
+        count("INTERVIEW_COMPLETED"),
+        count("HIRED"),
+        count("REJECTED"),
       ]);
-    const total = applied + aiReviewed + interviewInvited + interviewCompleted + hired + rejected;
-    return { applied, aiReviewed, interviewInvited, interviewCompleted, hired, rejected, total };
+    const total =
+      applied + aiReviewed + shortlisted + interviewScheduled + interviewCompleted + hired + rejected;
+    return {
+      applied,
+      aiReviewed,
+      shortlisted,
+      interviewScheduled,
+      interviewCompleted,
+      hired,
+      rejected,
+      total,
+    };
   }),
 
   // ---------- CANDIDATE ----------
@@ -350,27 +380,22 @@ export const candidatesRouter = createTRPCRouter({
         `🎯 Candidate Match Score: ${analysis.matchScore}%`
       );
 
-      // Auto-screening: score >= threshold -> invite to interview, else reject.
+      // Auto-screening: score >= threshold -> SHORTLISTED (the company picks who gets
+      // interviewed later), otherwise rejected by email.
       // If anything fails here the candidate stays AI_REVIEWED for manual review.
       try {
-        const withJob = { ...updatedCandidate, job };
         if (analysis.matchScore >= AUTO_SCREEN_THRESHOLD) {
-          const invited = await inviteCandidate(ctx.prisma, withJob);
-          return {
-            ...invited,
-            decision: "INVITED" as const,
-            interviewDate: job.interviewDate,
-          };
+          const shortlisted = await ctx.prisma.candidate.update({
+            where: { id: candidate.id },
+            data: { status: "SHORTLISTED" },
+          });
+          return { ...shortlisted, decision: "SHORTLISTED" as const };
         }
-        const rejected = await rejectCandidate(ctx.prisma, withJob);
-        return {
-          ...rejected,
-          decision: "REJECTED" as const,
-          interviewDate: job.interviewDate,
-        };
+        const rejected = await rejectCandidate(ctx.prisma, { ...updatedCandidate, job });
+        return { ...rejected, decision: "REJECTED" as const };
       } catch (autoErr) {
         console.error("Auto-screening failed, left for manual review:", autoErr);
-        return { ...updatedCandidate, decision: null, interviewDate: job.interviewDate };
+        return { ...updatedCandidate, decision: null };
       }
 
     } catch (err) {
@@ -381,10 +406,11 @@ export const candidatesRouter = createTRPCRouter({
       console.error("=================================");
 
       // Candidate is still saved
-      return { ...candidate, decision: null, interviewDate: job.interviewDate };
+      return { ...candidate, decision: null };
     }
   }),
 
+  // Candidate account is only used to apply and to follow the application status.
   getMyApplications: candidateProcedure.query(async ({ ctx }) => {
     return ctx.prisma.candidate.findMany({
       where: { userId: ctx.user.id },
@@ -397,29 +423,9 @@ export const candidatesRouter = createTRPCRouter({
             department: true,
             location: true,
             imageUrl: true,
-            interviewDate: true,
           },
         },
-        calls: { orderBy: { createdAt: "desc" }, take: 1 },
       },
     });
   }),
-
-  // Candidate loads their own application to enter the interview room
-  getMyApplicationById: candidateProcedure
-    .input(z.object({ id: z.string() }))
-    .query(async ({ ctx, input }) => {
-      const candidate = await ctx.prisma.candidate.findUnique({
-        where: { id: input.id },
-        include: { job: true, calls: { orderBy: { createdAt: "desc" } } },
-      });
-      if (!candidate || candidate.userId !== ctx.user.id) {
-        throw new TRPCError({ code: "FORBIDDEN" });
-      }
-      // Interview questions stay hidden until the candidate has actually been approved.
-      if (!candidate.interviewApproved) {
-        return { ...candidate, job: { ...candidate.job, interviewQuestions: null } };
-      }
-      return candidate;
-    }),
 });

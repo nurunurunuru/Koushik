@@ -1,11 +1,8 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import {
-  createTRPCRouter,
-  adminProcedure,
-  candidateProcedure,
-} from "@/src/server/trpc";
+import { createTRPCRouter, adminProcedure } from "@/src/server/trpc";
 import { generateInterviewReport } from "@/src/lib/gemini";
+import { computeFinalScore, MAX_BOARD_MARK } from "@/src/lib/scoring";
 
 // Throws unless the call belongs to a candidate of a job owned by the logged-in admin.
 async function assertOwnsCall(
@@ -118,139 +115,117 @@ export const callsRouter = createTRPCRouter({
     };
   }),
 
-  // ---------- CANDIDATE ----------
+  // ---------- LIVE BOARD INTERVIEW (admin / company side) ----------
 
-  // Candidate opens the interview room -> creates (or resumes) an IN_PROGRESS call.
-  // Only allowed once the admin has approved + invited them.
-  start: candidateProcedure
+  // The board clicks a scheduled candidate's name -> a new live interview (call) is created.
+  // Returns the job's interview questions for the AI interviewer (never shown on screen).
+  startBoardInterview: adminProcedure
     .input(z.object({ candidateId: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      const candidate = await ctx.prisma.candidate.findUnique({
-        where: { id: input.candidateId },
-        include: { job: true, calls: true },
+      const candidate = await ctx.prisma.candidate.findFirst({
+        where: { id: input.candidateId, job: { adminId: ctx.user.id } },
+        include: { job: true },
       });
-      if (!candidate || candidate.userId !== ctx.user.id) {
-        throw new TRPCError({ code: "FORBIDDEN" });
-      }
-      if (!candidate.interviewApproved) {
+      if (!candidate) throw new TRPCError({ code: "NOT_FOUND" });
+      if (candidate.status !== "INTERVIEW_SCHEDULED") {
         throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "You have not been approved for an interview yet.",
+          code: "BAD_REQUEST",
+          message: "This candidate is not waiting for an interview.",
         });
       }
 
-      // The interview can only start once the company's interview date/time has arrived.
-      const scheduledFor = candidate.job.interviewDate;
-      if (scheduledFor && scheduledFor.getTime() > Date.now()) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "Your interview has not opened yet. Please come back at the scheduled date and time.",
-        });
-      }
+      // An interview that was abandoned half way is closed, the candidate can be interviewed again.
+      await ctx.prisma.call.updateMany({
+        where: { candidateId: candidate.id, status: "IN_PROGRESS" },
+        data: { status: "FAILED", endedAt: new Date(), notes: "Interview was not finished." },
+      });
 
-      const failedCall = candidate.calls.find((c: { status: string }) => c.status === "FAILED");
-      if (failedCall) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "This interview has been cancelled and cannot be resumed.",
-        });
-      }
-
-      const completedCall = candidate.calls.find((c: { status: string }) => c.status === "COMPLETED");
-      if (completedCall) return completedCall;
-
-      const openCall = candidate.calls.find((c: { status: string }) => c.status === "IN_PROGRESS" || c.status === "SCHEDULED");
-      if (openCall) return openCall;
-
-      return ctx.prisma.call.create({
+      const call = await ctx.prisma.call.create({
         data: {
           candidateId: candidate.id,
-          type: "SCREENING",
+          type: "BOARD_INTERVIEW",
           status: "IN_PROGRESS",
           startedAt: new Date(),
         },
       });
-    }),
 
-  // Candidate leaves the interview page / opens another tab.
-  // The client marks the active interview as FAILED so it cannot be resumed.
-  cancel: candidateProcedure
-    .input(
-      z.object({
-        callId: z.string(),
-        reason: z.string().max(500).optional(),
-      })
-    )
-    .mutation(async ({ ctx, input }) => {
-      const call = await ctx.prisma.call.findUnique({
-        where: { id: input.callId },
-        include: { candidate: true },
-      });
-
-      if (!call || call.candidate.userId !== ctx.user.id) {
-        throw new TRPCError({ code: "FORBIDDEN" });
+      let questions: string[] = [];
+      try {
+        const parsed = candidate.job.interviewQuestions
+          ? JSON.parse(candidate.job.interviewQuestions)
+          : [];
+        if (Array.isArray(parsed)) questions = parsed.filter((q) => typeof q === "string");
+      } catch {
+        questions = [];
       }
 
-      if (call.status === "COMPLETED" || call.status === "FAILED") {
-        return call;
-      }
-
-      return ctx.prisma.call.update({
-        where: { id: call.id },
-        data: {
-          status: "FAILED",
-          endedAt: new Date(),
-          notes: input.reason || "Interview cancelled by security policy.",
-        },
-      });
+      return {
+        callId: call.id,
+        candidateName: candidate.name,
+        jobTitle: candidate.job.title,
+        questions,
+      };
     }),
 
-  // Candidate's browser submits the finished Vapi transcript. Triggers Gemini
-  // to write a structured interview report for the admin.
-  submitTranscript: candidateProcedure
+  // Board closes the interview: saves the Q&A transcript + the board's own questions/points,
+  // asks Gemini to score the AI-asked questions, and computes the final score.
+  completeBoardInterview: adminProcedure
     .input(
       z.object({
         callId: z.string(),
         transcript: z.string(),
         duration: z.number().int().optional(),
-        vapiCallId: z.string().optional(),
-        videoUrl: z.string().url().optional(),
+        boardEntries: z
+          .array(
+            z.object({
+              question: z.string().min(1).max(500),
+              answer: z.string().max(4000).optional(),
+            })
+          )
+          .max(100),
       })
     )
     .mutation(async ({ ctx, input }) => {
+      await assertOwnsCall(ctx, input.callId);
       const call = await ctx.prisma.call.findUnique({
         where: { id: input.callId },
         include: { candidate: { include: { job: true } } },
       });
-      if (!call || call.candidate.userId !== ctx.user.id) {
-        throw new TRPCError({ code: "FORBIDDEN" });
+      if (!call) throw new TRPCError({ code: "NOT_FOUND" });
+
+      // AI score for the AI-asked questions
+      let aiScore: number | null = null;
+      let reportData: Record<string, unknown> = {};
+      if (input.transcript.trim().length > 20) {
+        try {
+          const report = await generateInterviewReport({
+            jobTitle: call.candidate.job.title,
+            jobDescription: call.candidate.job.description,
+            candidateName: call.candidate.name,
+            transcript: input.transcript,
+          });
+          aiScore = Math.max(0, Math.min(100, Math.round(report.overallScore)));
+          reportData = {
+            aiReport: JSON.stringify(report),
+            recommendation: report.recommendation,
+            summary: report.summary,
+            rating: Math.round(report.overallScore / 20),
+          };
+        } catch (err) {
+          console.error("Interview report generation failed:", err);
+        }
       }
 
-      let reportData: Record<string, unknown> = {};
-      try {
-        const report = await generateInterviewReport({
-          jobTitle: call.candidate.job.title,
-          jobDescription: call.candidate.job.description,
-          candidateName: call.candidate.name,
-          transcript: input.transcript,
-        });
-        reportData = {
-          aiReport: JSON.stringify(report),
-          recommendation: report.recommendation,
-          summary: report.summary,
-          rating: Math.round(report.overallScore / 20), // map 0-100 -> 1-5 stars
-        };
-      } catch (err) {
-        console.error("Interview report generation failed:", err);
-      }
+      // The board's mark is given later (Board Review). Until then the final mark is the AI mark.
+      const boardScore = null;
+      const finalScore = computeFinalScore(aiScore, boardScore);
 
       const updatedCall = await ctx.prisma.call.update({
         where: { id: input.callId },
         data: {
           transcript: input.transcript,
           duration: input.duration,
-          vapiCallId: input.vapiCallId,
-          videoUrl: input.videoUrl,
+          boardEntries: JSON.stringify(input.boardEntries),
           status: "COMPLETED",
           endedAt: new Date(),
           ...reportData,
@@ -259,9 +234,87 @@ export const callsRouter = createTRPCRouter({
 
       await ctx.prisma.candidate.update({
         where: { id: call.candidateId },
-        data: { status: "INTERVIEW_COMPLETED" },
+        data: { status: "INTERVIEW_COMPLETED", aiScore, boardScore, finalScore },
       });
 
-      return updatedCall;
+      return { call: updatedCall, aiScore, boardScore, finalScore };
+    }),
+
+  // Saves the board members' questions + the candidate's replies (no marks here).
+  updateBoardEntries: adminProcedure
+    .input(
+      z.object({
+        callId: z.string(),
+        boardEntries: z
+          .array(
+            z.object({
+              question: z.string().min(1).max(500),
+              answer: z.string().max(4000).optional(),
+            })
+          )
+          .max(100),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await assertOwnsCall(ctx, input.callId);
+      const call = await ctx.prisma.call.findUnique({
+        where: { id: input.callId },
+        include: { candidate: true },
+      });
+      if (!call) throw new TRPCError({ code: "NOT_FOUND" });
+
+      await ctx.prisma.call.update({
+        where: { id: input.callId },
+        data: { boardEntries: JSON.stringify(input.boardEntries) },
+      });
+
+      return {
+        aiScore: call.candidate.aiScore,
+        boardScore: call.candidate.boardScore,
+        finalScore: call.candidate.finalScore,
+      };
+    }),
+
+  // Board Review: after reading the candidate's replies to the board's questions the board gives
+  // ONE mark. It is added to the AI mark to make the final mark.
+  saveBoardMark: adminProcedure
+    .input(
+      z.object({
+        callId: z.string(),
+        mark: z.number().int().min(0).max(MAX_BOARD_MARK),
+        comment: z.string().max(2000).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await assertOwnsCall(ctx, input.callId);
+      const call = await ctx.prisma.call.findUnique({
+        where: { id: input.callId },
+        include: { candidate: true },
+      });
+      if (!call) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const finalScore = computeFinalScore(call.candidate.aiScore, input.mark);
+
+      await ctx.prisma.call.update({
+        where: { id: input.callId },
+        data: { boardComment: input.comment?.trim() || null },
+      });
+      await ctx.prisma.candidate.update({
+        where: { id: call.candidateId },
+        data: { boardScore: input.mark, finalScore },
+      });
+
+      return { aiScore: call.candidate.aiScore, boardScore: input.mark, finalScore };
+    }),
+
+  // Board stops an interview without saving (e.g. technical problem).
+  cancelBoardInterview: adminProcedure
+    .input(z.object({ callId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      await assertOwnsCall(ctx, input.callId);
+      return ctx.prisma.call.update({
+        where: { id: input.callId },
+        data: { status: "FAILED", endedAt: new Date(), notes: "Interview cancelled by the board." },
+      });
     }),
 });

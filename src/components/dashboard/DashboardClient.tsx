@@ -3,7 +3,7 @@
 import { StatsCard } from "@/src/components/dashboard/StatsCard";
 import { RecentCalls } from "@/src/components/dashboard/RecentCalls";
 import { ActiveJobsList } from "@/src/components/dashboard/ActiveJobsList";
-import { RecruiterVoiceAgent } from "@/src/components/voice/RecruiterVoiceAgent";
+import Link from "next/link";
 import { useTRPC } from "@/src/trpc/client";
 import { useQuery } from "@tanstack/react-query";
 
@@ -20,7 +20,7 @@ export function DashboardClient() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Overview of your recruitment pipeline and AI voice agent activity
+          Overview of your recruitment pipeline and interviews
         </p>
       </div>
 
@@ -44,7 +44,7 @@ export function DashboardClient() {
         <StatsCard
           title="Candidates"
           value={candidateStats?.total ?? 0}
-          description={`${candidateStats?.aiReviewed ?? 0} awaiting review`}
+          description={`${candidateStats?.shortlisted ?? 0} shortlisted`}
           accent="blue"
           icon={
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -102,14 +102,19 @@ export function DashboardClient() {
         <ActiveJobsList />
       </div>
 
-      <div>
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">
-          AI Voice Agent
-        </h2>
-        <RecruiterVoiceAgent
-          candidateName="Demo Candidate"
-          jobTitle="Software Engineer"
-        />
+      <div className="rounded-xl border border-primary-100 bg-primary-50/50 p-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900">Live Board Interviews</h2>
+          <p className="text-sm text-gray-600">
+            Select the best shortlisted candidates, schedule them, run the live AI + board interview and decide who gets the job.
+          </p>
+        </div>
+        <Link
+          href="/interviews"
+          className="inline-flex items-center justify-center rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700"
+        >
+          Open Interviews
+        </Link>
       </div>
     </div>
   );
